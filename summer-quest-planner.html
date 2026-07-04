@@ -194,6 +194,8 @@
         <div class="check-col" id="checkColSport"></div>
         <div class="check-col" id="checkColChore"></div>
       </div>
+      <div class="field-label" style="margin-top:14px">📝 今天做了什么</div>
+      <textarea id="refNotes" rows="2" placeholder="比如：语文背了古诗，羽毛球打了30分钟~" oninput="autoSaveNotes()"></textarea>
     </div>
 
     <!-- 时刻表 inline 窄屏显示 -->
@@ -510,6 +512,8 @@ function closeOverlay(id){
         rec.reflection.good = popupRefGood.value.trim();
         rec.reflection.hard = document.getElementById('popupRefHard').value.trim();
         rec.reflection.improve = document.getElementById('popupRefImprove').value.trim();
+        const popupNotes = document.getElementById('popupNotes');
+        if(popupNotes) rec.notes = popupNotes.value.trim();
         saveData(data);
         renderMap();
         if(key === todayKey()) renderToday();
@@ -619,6 +623,7 @@ function renderToday(){
   document.getElementById('refGood').value = ref.good;
   document.getElementById('refHard').value = ref.hard;
   document.getElementById('refImprove').value = ref.improve;
+  document.getElementById('refNotes').value = rec.notes || '';
 
   const moodRow = document.getElementById('moodRow');
   moodRow.innerHTML = '';
@@ -658,6 +663,13 @@ function autoSaveReflection(){
   saveData(data);
   const hint = document.getElementById('autoSaveHint');
   if(hint){ hint.textContent = '已自动保存'; hint.style.opacity = '1'; }
+}
+
+function autoSaveNotes(){
+  const key = todayKey();
+  const rec = getRecord(data, key);
+  rec.notes = document.getElementById('refNotes').value.trim();
+  saveData(data);
 }
 
 /* ========================= 时刻表编辑 ========================= */
@@ -866,6 +878,10 @@ function showDayDetail(dateKey){
     + '<textarea id="popupRefHard" rows="2" placeholder="学科或运动都可以">' + escapeHtml(ref.hard) + '</textarea>'
     + '<div class="field-label">明天想改进一点点的是？</div>'
     + '<textarea id="popupRefImprove" rows="2" placeholder="小小的目标就够啦">' + escapeHtml(ref.improve) + '</textarea>';
+
+  // notes
+  html += '<div class="field-label">📝 今天做了什么</div>'
+    + '<textarea id="popupNotes" rows="2" placeholder="比如：语文背了古诗，羽毛球打了30分钟~">' + escapeHtml(rec.notes||'') + '</textarea>';
 
   // editable mood
   html += '<div class="field-label">心情</div><div class="mood-row" style="justify-content:flex-start;gap:6px">';
@@ -1197,6 +1213,15 @@ function showWeeklyReport(){
     html += '<div style="font-size:.8rem;margin-bottom:3px">' + c.icon + ' ' + c.label + ' <span class="num" style="color:var(--coral)">' + c.done + '天</span></div>';
   });
   html += '</div></div>';
+
+  // notes highlights
+  const weekNotes = keys.map(k=>{ const r=data[k]; return r&&r.notes?r.notes:null; }).filter(n=>n);
+  if(weekNotes.length>0){
+    html += '<div class="field-label">📝 本周备注摘录</div>';
+    weekNotes.forEach(n=>{
+      html += '<div style="font-size:.8rem;margin-bottom:4px;padding:8px;background:var(--bg);border-radius:8px">' + escapeHtml(n) + '</div>';
+    });
+  }
 
   // encouragement
   if(qualifiedDays>=7){
