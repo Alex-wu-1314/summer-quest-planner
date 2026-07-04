@@ -219,6 +219,11 @@
       <div class="mood-row" id="moodRow"></div>
       <div style="text-align:right;font-size:.72rem;color:var(--muted);margin-top:8px;" id="autoSaveHint">已自动保存</div>
     </div>
+    <div class="card" id="aiAssistantCard" style="display:none">
+      <h3>🤖 小关说</h3>
+      <div id="aiAssistantContent" style="font-size:.85rem;line-height:1.6;color:var(--ink)"></div>
+      <div style="text-align:right;font-size:.65rem;color:var(--muted);margin-top:8px">AI 生成，仅供参考</div>
+    </div>
   </div>
 
   <!-- 地图 -->
@@ -267,6 +272,17 @@
       <div class="field-label">开学日期</div>
       <input type="date" id="settingsSchoolDate">
       <button class="btn secondary" onclick="saveSettings()">保存设置</button>
+    </div>
+    <div class="card">
+      <h3>🤖 AI 助手设置</h3>
+      <div class="field-label">API Base URL</div>
+      <input type="text" id="settingsApiUrl" placeholder="https://api.openai.com/v1">
+      <div class="field-label">API Key</div>
+      <input type="password" id="settingsApiKey" placeholder="sk-...">
+      <div class="field-label">模型名称</div>
+      <input type="text" id="settingsApiModel" placeholder="gpt-4o-mini">
+      <button type="button" class="btn" onclick="saveAISettings()">保存 AI 设置</button>
+      <div style="font-size:.7rem;color:var(--muted);margin-top:6px">AI 用于生成周报总结和每日鼓励。不配置也不影响基本功能。</div>
     </div>
     <div class="card">
       <h3>⏰ 时刻表设置</h3>
@@ -336,6 +352,14 @@
   <div class="overlay-card" style="position:relative">
     <button class="close-x" onclick="closeOverlay('weeklyReportOverlay')">✕</button>
     <div id="weeklyReportContent"></div>
+  </div>
+</div>
+
+<!-- 终极报告弹窗 -->
+<div class="overlay" id="finalReportOverlay">
+  <div class="overlay-card" style="position:relative;max-width:520px">
+    <button class="close-x" onclick="closeFinalReport()">✕</button>
+    <div id="finalReportContent"></div>
   </div>
 </div>
 
@@ -480,6 +504,7 @@ function saveSettings(){
   const v = document.getElementById('settingsSchoolDate').value;
   if(!v){ alert('请选一下开学日期哦'); return; }
   config.schoolDate = v;
+  config.finalReportShown = false;
   saveConfig(config);
   alert('已保存~');
   renderAll();
@@ -493,7 +518,7 @@ function switchView(name){
   localStorage.setItem('squest_lastview', name);
   if(name==='map') renderMap();
   if(name==='stats') renderStats();
-  if(name==='backup'){ document.getElementById('settingsSchoolDate').value = config.schoolDate; renderScheduleEditor(); }
+  if(name==='backup'){ document.getElementById('settingsSchoolDate').value = config.schoolDate; renderScheduleEditor(); renderAISettings(); }
 }
 function closeOverlay(id){
   if(id==='dayDetailOverlay'){
@@ -561,6 +586,7 @@ function renderHeader(){
 /* ========================= 今日打卡 ========================= */
 function renderToday(){
   checkWeeklyReport();
+  checkFinalReport();
   const key = todayKey();
   const rec = getRecord(data, key);
   const d = parseKey(key);
@@ -631,17 +657,19 @@ function renderToday(){
     const btn = document.createElement('button');
     btn.className = 'mood-btn' + (ref.mood===m.v ? ' selected':'');
     btn.textContent = m.e;
-    btn.onclick = ()=>{ autoSaveReflection(); ref.mood = m.v; rec.reflection = ref; saveData(data); renderToday(); };
+    btn.onclick = ()=>{ autoSaveReflection(); ref.mood = m.v; rec.reflection = ref; saveData(data); renderToday(); refreshAIAssistant(); };
     moodRow.appendChild(btn);
   });
 
   renderCoachTip();
 }
 
-function celebrate(){
+function celebrate(count, duration){
   const emojis = ['🎉','🎊','⭐','🌟','💪','🔥','✨','🏆','👏','🥳'];
   const container = document.getElementById('confettiContainer');
-  for(let i=0;i<20;i++){
+  const n = count || 20;
+  const dur = duration || 2500;
+  for(let i=0;i<n;i++){
     const p = document.createElement('span');
     p.className = 'confetti-particle';
     p.textContent = emojis[Math.floor(Math.random()*emojis.length)];
@@ -649,7 +677,7 @@ function celebrate(){
     p.style.animationDelay = Math.random()*0.6 + 's';
     p.style.animationDuration = (2.5+Math.random()*2) + 's';
     container.appendChild(p);
-    setTimeout(()=>p.remove(), 4000);
+    setTimeout(()=>p.remove(), dur);
   }
 }
 
@@ -1004,6 +1032,16 @@ function computeBadges(){
 function renderBadges(){
   const badges = computeBadges();
   const earnedIds = badges.filter(b=>b.earned).map(b=>b.id);
+  // 全部勋章获得 → 撒花10秒
+  if(earnedIds.length === BADGES.length && !config.allBadgesCelebrated){
+    config.allBadgesCelebrated = true;
+    saveConfig(config);
+    celebrate(50, 10000);
+    const toast = document.getElementById('badgeToast');
+    toast.innerHTML = '🏆 恭喜你获得所有勋章！你是最棒的！🎉';
+    toast.classList.add('show');
+    setTimeout(()=>toast.classList.remove('show'), 6000);
+  }
   // check for newly earned
   const seen = config.badgesSeen || [];
   const newBadges = badges.filter(b=>b.earned && !seen.includes(b.id));
@@ -1241,6 +1279,8 @@ function showWeeklyReport(){
   const {weekKey: wk} = getWeekRange();
   config.lastReportWeek = wk;
   saveConfig(config);
+  // AI 周报
+  refreshWeeklyReportAI();
 }
 
 function checkWeeklyReport(){
@@ -1249,6 +1289,336 @@ function checkWeeklyReport(){
     // Sunday, and haven't shown report this week
     const hasData = Object.keys(data).length>0;
     if(hasData) showWeeklyReport();
+  }
+}
+
+/* ========================= 终极报告 ========================= */
+function checkFinalReport(){
+  const today = parseKey(todayKey());
+  const school = parseKey(config.schoolDate);
+  const daysLeft = daysBetween(today, school);
+  // 开学前一天或开学后打开时弹出，仅一次
+  if(daysLeft <= 1 && !config.finalReportShown){
+    config.finalReportShown = true;
+    saveConfig(config);
+    showFinalReport();
+  }
+}
+
+function showFinalReport(){
+  const start = parseKey(config.startDate);
+  const school = parseKey(config.schoolDate);
+  const totalDays = daysBetween(start, school);
+  const allKeys = Object.keys(data).sort();
+  let totalCheckin=0, qualifiedDays=0, fullDays=0, totalCats=0;
+  const catTotal={}; CATEGORIES.forEach(c=>{catTotal[c.id]=0;});
+  allKeys.forEach(k=>{
+    const rec=data[k]; const c=completedCount(rec);
+    if(c>0){ totalCheckin++; totalCats+=c; }
+    CATEGORIES.forEach(cat=>{if(rec[cat.id]) catTotal[cat.id]++;});
+    if(isQualified(rec)){ qualifiedDays++; if(c===15) fullDays++; }
+  });
+
+  const topCat=CATEGORIES.map(c=>({...c,done:catTotal[c.id]})).sort((a,b)=>b.done-a.done)[0];
+  const avgCats = totalCheckin>0 ? (totalCats/totalCheckin).toFixed(1) : 0;
+  const qualifyRate = totalCheckin>0 ? Math.round(qualifiedDays/totalCheckin*100) : 0;
+  const badgesEarned = computeBadges().filter(b=>b.earned).length;
+  const totalBadges = BADGES.length;
+
+  // 选取一条最好的反思
+  let bestReflection='';
+  Object.keys(data).forEach(k=>{
+    const ref=data[k].reflection;
+    if(ref && ref.good) bestReflection = ref.good;
+  });
+
+  celebrate(60, 10000);
+
+  let html = '<div style="text-align:center">'
+    + '<div style="font-size:3rem;margin-bottom:8px">🎉</div>'
+    + '<h3 style="margin:0 0 4px">暑假闯关完成！</h3>'
+    + '<div style="font-size:.8rem;color:var(--muted);margin-bottom:16px">' + start.getFullYear() + '年暑假 · 共' + totalDays + '天</div>'
+    + '</div>'
+    + '<div class="summary-grid" style="margin-bottom:14px">'
+    + '<div class="summary-box"><div class="num">' + totalCheckin + '</div><div class="lbl">打卡天数</div></div>'
+    + '<div class="summary-box"><div class="num">' + qualifyRate + '%</div><div class="lbl">达标率</div></div>'
+    + '<div class="summary-box"><div class="num">' + qualifiedDays + '</div><div class="lbl">达标天数</div></div>'
+    + '<div class="summary-box"><div class="num">' + badgesEarned + '/' + totalBadges + '</div><div class="lbl">获得勋章</div></div>'
+    + '</div>';
+
+  if(topCat){
+    html += '<div class="coach-tip" style="text-align:center">🏆 最常做的项目是 <b>' + topCat.icon + ' ' + topCat.label + '</b>，完成了 ' + topCat.done + ' 次！'
+    + (bestReflection ? '<br><br>📝 印象最深的是：<br>' + bestReflection : '')
+    + '</div>';
+  }
+
+  html += '<div style="text-align:center;font-size:.85rem;color:var(--ink);line-height:1.7;margin-top:8px">'
+    + '这个暑假你坚持了 ' + totalCheckin + ' 天，'
+    + '平均每天完成 ' + avgCats + ' 项任务。<br>'
+    + '新的学期也要继续加油哦！📚✨'
+    + '</div>';
+
+  document.getElementById('finalReportContent').innerHTML = html;
+  document.getElementById('finalReportOverlay').classList.add('active');
+  refreshFinalReportAI();
+}
+
+async function generateFinalReport(){
+  if(!aiConfigured()) return {error:'AI 未配置'};
+  const userName = config.name || '小朋友';
+  const start = parseKey(config.startDate);
+  const school = parseKey(config.schoolDate);
+  const totalDays = daysBetween(start, school);
+  const allKeys = Object.keys(data).sort();
+  let totalCheckin=0, qualifiedDays=0;
+  const catTotal={}; CATEGORIES.forEach(c=>{catTotal[c.id]=0;});
+  allKeys.forEach(k=>{
+    const rec=data[k]; const c=completedCount(rec);
+    if(c>0){ totalCheckin++; }
+    CATEGORIES.forEach(cat=>{if(rec[cat.id]) catTotal[cat.id]++;});
+    if(isQualified(rec)) qualifiedDays++;
+  });
+  const top3=CATEGORIES.map(c=>({...c,done:catTotal[c.id]})).sort((a,b)=>b.done-a.done).slice(0,3);
+  const allCats = CATEGORIES.map(c=>c.label+'('+catTotal[c.id]+'次)').join('、');
+  const qualifyRate = totalCheckin>0 ? Math.round(qualifiedDays/totalCheckin*100) : 0;
+  const badgesEarned = computeBadges().filter(b=>b.earned).length;
+  const totalBadges = BADGES.length;
+
+  const prompt = `你是暑假闯关计划的小助手"小关"，请根据以下整个暑假的数据，为${userName}生成一份温暖、有纪念意义的终极总结报告。
+
+暑假共${totalDays}天
+打卡天数：${totalCheckin}天
+达标天数：${qualifiedDays}天（达标率${qualifyRate}%）
+	完成最多的项目：${top3.map(c=>c.label+'('+c.done+'次)').join('、')}
+	各项完成情况：${allCats}
+	
+	要求：
+	1. 语气温暖亲切，像一个大哥哥/大姐姐在暑假结束时对小朋友说的话
+	2. 回顾这个暑假的成长和进步，肯定努力
+	3. 尽量列出各项数据（打卡天数、达标率、各项完成次数），让用户看到自己整个暑假的成长
+	4. 给出新学期的祝福和鼓励
+	5. 200-300字，要有细节
+	6. 不要用"亲爱的"之类的称呼`;
+
+  return await aiChat(prompt, '请帮我写暑假终极总结报告');
+}
+
+async function refreshFinalReportAI(){
+  const result = await generateFinalReport();
+  const existing = document.getElementById('finalReportContent').innerHTML;
+  // 替换最后一段鼓励语
+  const idx = existing.lastIndexOf('<div style="text-align:center;font-size:.85rem');
+  if(idx>=0 && result.text){
+    document.getElementById('finalReportContent').innerHTML =
+      existing.substring(0,idx) + '<div class="coach-tip" style="text-align:center">🤖 ' + result.text.replace(/\n/g,'<br>') + '</div>';
+  }
+}
+
+function closeFinalReport(){
+  document.getElementById('finalReportOverlay').classList.remove('active');
+}
+
+/* ========================= AI 助手 ========================= */
+function renderAISettings(){
+  document.getElementById('settingsApiUrl').value = config.aiUrl || '';
+  document.getElementById('settingsApiKey').value = config.aiKey || '';
+  document.getElementById('settingsApiModel').value = config.aiModel || '';
+}
+
+function saveAISettings(){
+  config.aiUrl = document.getElementById('settingsApiUrl').value.trim();
+  config.aiKey = document.getElementById('settingsApiKey').value.trim();
+  config.aiModel = document.getElementById('settingsApiModel').value.trim();
+  saveConfig(config);
+  alert('AI 设置已保存~');
+}
+
+function aiConfigured(){
+  return !!(config.aiUrl && config.aiKey && config.aiModel);
+}
+
+async function aiChat(systemPrompt, userMessage){
+  if(!aiConfigured()) return {error:'AI 未配置'};
+  const isAnthropic = config.aiUrl.includes('anthropic');
+  try{
+    let resp, json;
+    if(isAnthropic){
+      resp = await fetch(config.aiUrl, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'x-api-key':config.aiKey,
+          'anthropic-version':'2023-06-01'
+        },
+        body:JSON.stringify({
+          model:config.aiModel,
+          system:systemPrompt,
+          messages:[{role:'user',content:userMessage}],
+          max_tokens:600
+        })
+      });
+      if(!resp.ok){ const err=await resp.text(); return {error:'HTTP '+resp.status+': '+err.slice(0,200)}; }
+      json = await resp.json();
+      if(!json.content) return {error:'响应格式异常: '+JSON.stringify(json).slice(0,200)};
+      return {text:json.content[0].text};
+    } else {
+      resp = await fetch(config.aiUrl + '/chat/completions', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+config.aiKey},
+        body:JSON.stringify({
+          model:config.aiModel,
+          messages:[
+            {role:'system',content:systemPrompt},
+            {role:'user',content:userMessage}
+          ],
+          max_tokens:600,
+          temperature:0.8
+        })
+      });
+      if(!resp.ok){ const err=await resp.text(); return {error:'HTTP '+resp.status+': '+err.slice(0,200)}; }
+      json = await resp.json();
+      return {text:json.choices[0].message.content};
+    }
+  }catch(e){
+    return {error:'网络错误: '+e.message};
+  }
+}
+
+function buildFullHistory(){
+  const keys = Object.keys(data).sort();
+  let history = '';
+  keys.forEach(k=>{
+    const rec = data[k];
+    const cats = CATEGORIES.filter(c=>rec[c.id]).map(c=>c.label).join('、')||'无';
+    const ref = rec.reflection||{};
+    history += k + ' | 打卡:' + cats;
+    if(ref.good) history += ' | 成就:' + ref.good;
+    if(ref.hard) history += ' | 困难:' + ref.hard;
+    if(ref.improve) history += ' | 改进:' + ref.improve;
+    if(ref.mood) history += ' | 心情:' + ref.mood + '/5';
+    if(rec.notes) history += ' | 备注:' + rec.notes;
+    history += '\n';
+  });
+  return history;
+}
+
+async function generateWeeklyReport(){
+  if(!aiConfigured()) return {error:'AI 未配置'};
+  const {weekStart, weekEnd} = getWeekRange();
+  const keys = getDatesInRange(weekStart, weekEnd);
+  let qualifiedDays=0, totalDays=0;
+  const catDone={}; CATEGORIES.forEach(c=>{catDone[c.id]=0;});
+  let reflections='';
+  keys.forEach(k=>{
+    const rec=data[k];
+    if(rec){
+      totalDays++;
+      if(isQualified(rec)) qualifiedDays++;
+      CATEGORIES.forEach(c=>{if(rec[c.id]) catDone[c.id]++;});
+      const ref=rec.reflection||{};
+      if(ref.good||ref.hard||ref.improve) reflections+=k+': '+[ref.good,ref.hard,ref.improve].filter(Boolean).join(' | ')+'\n';
+      if(rec.notes) reflections+=k+' 备注:'+rec.notes+'\n';
+    }
+  });
+  const top3=CATEGORIES.map(c=>({...c,done:catDone[c.id]})).sort((a,b)=>b.done-a.done).slice(0,3);
+  const bottom3=CATEGORIES.map(c=>({...c,done:catDone[c.id]})).sort((a,b)=>a.done-b.done).slice(0,3);
+  const dateRange=(weekStart.getMonth()+1)+'/'+weekStart.getDate()+'-'+(weekEnd.getMonth()+1)+'/'+weekEnd.getDate();
+
+  const userName = config.name || '小朋友';
+  const prompt = `你是暑假闯关计划的小助手，名叫"小关"，你的服务对象是${userName}。请根据以下本周数据，生成一段温暖鼓励的周报总结。
+
+日期：${dateRange}
+达标天数：${qualifiedDays}/7
+打卡天数：${totalDays}/7
+完成最多的项目：${top3.map(c=>c.label+'('+c.done+'天)').join('、')}
+完成最少的项目：${bottom3.map(c=>c.label+'('+c.done+'天)').join('、')}
+
+本周反思和备注：
+${reflections||'无'}
+
+要求：
+1. 语气亲切温暖，像一个大哥哥/大姐姐在鼓励小朋友
+2. 先肯定本周做得好的地方
+3. 温和地指出可以改进的地方
+4. 结合反思内容给出个性化鼓励
+5. 结尾给一个下周的小建议
+6. 100-200字，不要太长
+7. 不要用"亲爱的"之类的称呼`;
+
+  return await aiChat(prompt, '请帮我写本周周报');
+}
+
+async function generateDailyAssistant(){
+  if(!aiConfigured()) return {error:'AI 未配置'};
+  const today = todayKey();
+  const rec = data[today];
+  if(!rec) return null;
+
+  const fullHistory = buildFullHistory();
+  const todayCats = CATEGORIES.filter(c=>rec[c.id]).map(c=>c.label).join('、')||'还没有打卡';
+  const ref = rec.reflection||{};
+  const isQual = isQualified(rec);
+  const streak = computeStreak();
+
+  const userName = config.name || '小朋友';
+  const prompt = `你是暑假闯关计划的小助手，名叫"小关"，你的服务对象是${userName}。你有超强的记忆力，能记住用户过去所有的打卡记录、反思内容和备注。
+
+你的核心职责：
+1. 记住用户在反思中提到的事情（比如"跳绳突破了200个""希望下次突破210个""明天要背古诗"），在合适的时候提醒和鼓励
+2. 发现用户的进步趋势，及时表扬（比如"连续3天都完成了运动，太棒了"）
+3. 当用户情绪低落时给予安慰，当用户表现好时给予热烈鼓励
+4. 像一个真正关心他的朋友一样聊天
+
+以下是用户从开始到现在的完整记录：
+${fullHistory}
+
+今天是${today}，今天的打卡：${todayCats}
+今日反思：${[ref.good,ref.hard,ref.improve].filter(Boolean).join(' | ')||'还没有写反思'}
+今日心情：${ref.mood||'还没有选'}${ref.mood?'/5':''}
+今日备注：${rec.notes||'无'}
+今天${isQual?'已达标！':'还没达标'}
+
+请根据以上信息生成一段话（50-120字），要求：
+1. 如果用户之前提到过什么目标或想改进的事，记得提醒和鼓励
+2. 如果今天达标了，热烈祝贺；如果还没达标，温和鼓励
+3. 如果连续多天达标，要特别表扬这个坚持
+4. 如果心情持续低落，要关心一下
+5. 像一个真正关心他的朋友，不要像机器人
+6. 语气亲切自然，不要用"亲爱的"`;
+
+  return await aiChat(prompt, '请根据今天的情况和用户的完整历史，生成一段鼓励的话');
+}
+
+let aiAssistantTimer=null;
+async function refreshAIAssistant(){
+  if(!aiConfigured()) return;
+  const card = document.getElementById('aiAssistantCard');
+  const contentEl = document.getElementById('aiAssistantContent');
+  card.style.display = 'block';
+  contentEl.innerHTML = '思考中...';
+  clearTimeout(aiAssistantTimer);
+  aiAssistantTimer = setTimeout(async ()=>{
+    try{
+      const result = await generateDailyAssistant();
+      if(result.text){
+        contentEl.innerHTML = result.text.replace(/\n/g,'<br>');
+      } else {
+        contentEl.innerHTML = '❌ ' + (result.error||'未知错误');
+      }
+    }catch(e){
+      contentEl.innerHTML = '❌ 异常：' + e.message;
+    }
+  }, 500);
+}
+
+async function refreshWeeklyReportAI(){
+  const result = await generateWeeklyReport();
+  const existing = document.getElementById('weeklyReportContent').innerHTML;
+  const idx = existing.lastIndexOf('<div class="coach-tip"');
+  if(idx>=0){
+    const content = result.text || ('❌ ' + (result.error||'未知错误'));
+    document.getElementById('weeklyReportContent').innerHTML =
+      existing.substring(0,idx) + '<div class="coach-tip">🤖 ' + content.replace(/\n/g,'<br>') + '</div>';
   }
 }
 
