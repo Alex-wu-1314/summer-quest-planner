@@ -478,7 +478,7 @@ function renderToday(){
     const btn = document.createElement('button');
     btn.className = 'mood-btn' + (ref.mood===m.v ? ' selected':'');
     btn.textContent = m.e;
-    btn.onclick = ()=>{ ref.mood = m.v; rec.reflection = ref; saveData(data); renderToday(); };
+    btn.onclick = ()=>{ ref.mood = m.v; rec.reflection = ref; syncReflectionInputs(rec); saveData(data); renderToday(); };
     moodRow.appendChild(btn);
   });
 
@@ -494,6 +494,14 @@ function saveToday(){
   rec.reflection.improve = document.getElementById('refImprove').value.trim();
   saveData(data);
   alert('今天保存好啦，明天继续加油！💪');
+}
+
+// 在点击心情或重新渲染前，先把文本框内容同步到数据中
+function syncReflectionInputs(rec){
+  rec.reflection = rec.reflection || {};
+  rec.reflection.good = document.getElementById('refGood').value.trim();
+  rec.reflection.hard = document.getElementById('refHard').value.trim();
+  rec.reflection.improve = document.getElementById('refImprove').value.trim();
 }
 
 /* ========================= 教练寄语 ========================= */
@@ -663,7 +671,7 @@ function renderStats(){
     const c = completedCount(rec);
     if(c>0) totalCheckin++;
     if(isQualified(rec)){ cur++; longest = Math.max(longest,cur); } else { cur=0; }
-    if(c===15) fullDays++;
+    if(isQualified(rec)) fullDays++;
   });
   document.getElementById('summaryGrid').innerHTML = ''
     + '<div class="summary-box"><div class="num">' + totalCheckin + '</div><div class="lbl">累计打卡天数</div></div>'
